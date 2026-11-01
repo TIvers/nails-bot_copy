@@ -1,0 +1,70 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis_service
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: fastapi_service
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+      ENABLE_PHP_PREUPDATE: ${ENABLE_PHP_PREUPDATE:-1}
+      PHP_SCRIPT: /app/backend/api/db_update.php
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8000"
+    volumes:
+      - ${INBOX_HOST_DIR:?Set INBOX_HOST_DIR in .env}:/var/lib/ingest/inbox
+      - ${BACKEND_API_DIR:?Set BACKEND_API_DIR in .env}:/app/backend/api:ro
+      - ${BITRIX_API_DIR:?Set BITRIX_API_DIR in .env}:/app/backend/api_bitrix:ro
+    user: "1000:1000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: celery_worker
+    command: celery -A app.tasks:celery_app worker --loglevel=info
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+      ENABLE_PHP_PREUPDATE: ${ENABLE_PHP_PREUPDATE:-1}
+      PHP_SCRIPT: /app/backend/api/db_update.php
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ${INBOX_HOST_DIR:?Set INBOX_HOST_DIR in .env}:/var/lib/ingest/inbox
+      - ${BACKEND_API_DIR:?Set BACKEND_API_DIR in .env}:/app/backend/api:ro
+      - ${BITRIX_API_DIR:?Set BITRIX_API_DIR in .env}:/app/backend/api_bitrix:ro
+    user: "1000:1000"
+    restart: unless-stopped
+
+volumes:
+  redis_data:
